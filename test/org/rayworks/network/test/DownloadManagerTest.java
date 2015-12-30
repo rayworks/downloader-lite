@@ -61,12 +61,16 @@ public class DownloadManagerTest {
         addBatchedTask(new String[]{
                 "http://assets-cdn.github.com/images/modules/open_graph/github-logo.png",
                 "http://assets-cdn.github.com/images/modules/aws/cloud-1.png",
-                "http://assets-cdn.github.com/images/modules/aws/cloud-4.png"
+                //"http://assets-cdn.github.com/images/modules/aws/cloud-4.png"
 
         });
 
         addSingleTask("http://music.baidu.com/cms/BaiduMusic-musicsybutton.apk");
 
+        addBatchedTask(new String[]{
+                "http://assets-cdn.github.com/images/modules/aws/cloud-4.png",
+                "http://music.baidu.com/cms/BaiduMusic-musicsybutton.apk"
+        });
 
         // prioritize the task
         //String url = "http://";

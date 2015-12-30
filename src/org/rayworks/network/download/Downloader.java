@@ -33,6 +33,7 @@ import org.rayworks.network.download.listener.DownloadListener;
 import org.rayworks.network.storage.SyncStateStore;
 import org.rayworks.network.util.EFLogger;
 import org.rayworks.network.util.IOUtils;
+import org.rayworks.network.util.MonitorController;
 
 public class Downloader implements IOUtils.CopyListener {
 
@@ -84,62 +85,70 @@ public class Downloader implements IOUtils.CopyListener {
      */
     public DownloadResult downloadFile() {
         EFLogger.v(TAG, "downloadFile, url=" + remoteUrlPath);
+        synchronized (MonitorController.getInstance().get(remoteUrlPath)) {
 
-        File targetFile = cache.getTempFile(remoteUrlPath);
+            // download the file
+            try {
+                URL url = new URL(remoteUrlPath);
+                if(cache.existFile(remoteUrlPath)){
+                    EFLogger.d(TAG, "Cache hit for " + remoteUrlPath + ", abort downloading again.");
 
-        // download the file
-        try {
-            URL url = new URL(remoteUrlPath);
-            HttpURLConnection connection = connect(remoteUrlPath, targetFile);
-
-            long start = 0;
-            int responseCode = connection.getResponseCode();
-
-            if (responseCode < 200 || responseCode > 299) {
-                throw new HttpRespInvalidState("Bad http response status code " + responseCode, responseCode);
-            }
-
-            EFLogger.d(TAG, ">>> resp code " + responseCode);
-
-            if (responseCode == 206) {
-                // The downloaded content can be appended to the existing file.
-                start = targetFile.length();
-            }
-
-            String location = connection.getHeaderField("Location");
-            if (location != null) {
-                // We have been redirected. This is typically a guard for the "Starbucks" case.
-                if (!url.equals(getUrlForLocation(location))) {
-                    EFLogger.v("Downloader", "Redirected, download will fail");
-                    return DownloadResult.createFailedDownloadResult(null);
+                    File file = cache.getFile(remoteUrlPath);
+                    return DownloadResult.createSuccessfulDownloadResult(url, file, file.length());
                 }
+
+                File targetFile = cache.getTempFile(remoteUrlPath);
+                HttpURLConnection connection = connect(remoteUrlPath, targetFile);
+
+                long start = 0;
+                int responseCode = connection.getResponseCode();
+
+                if (responseCode < 200 || responseCode > 299) {
+                    throw new HttpRespInvalidState("Bad http response status code " + responseCode, responseCode);
+                }
+
+                EFLogger.d(TAG, ">>> resp code " + responseCode);
+
+                if (responseCode == 206) {
+                    // The downloaded content can be appended to the existing file.
+                    start = targetFile.length();
+                }
+
+                String location = connection.getHeaderField("Location");
+                if (location != null) {
+                    // We have been redirected. This is typically a guard for the "Starbucks" case.
+                    if (!url.equals(getUrlForLocation(location))) {
+                        EFLogger.v("Downloader", "Redirected, download will fail");
+                        return DownloadResult.createFailedDownloadResult(null);
+                    }
+                }
+
+                // Note: content-length is the size to be downloaded, not total file size
+                // which will be different in the case of resuming a download
+                long size = start + connection.getContentLength();
+
+                // If successful, download returns the total file size
+                long total = download(connection.getInputStream(), start, size);
+
+                if (total == size) {
+                    // All the data was copied
+                    return DownloadResult.createSuccessfulDownloadResult(url, targetFile, size);
+                } else {
+                    // Not all the data was copied, but no error, so download was cancelled
+                    return DownloadResult.createCancelDownloadResult();
+                }
+            } catch (MalformedURLException e) { // bad url
+                return DownloadResult.createUnrecoverableErrorResult(e);
+            } catch (IOException e) {
+                e.printStackTrace();
+                return DownloadResult.createFailedDownloadResult(e);
+            } catch (HttpRespInvalidState e) {
+                EFLogger.d(TAG, "IOException:" + e.getMessage());
+                return DownloadResult.createUnrecoverableErrorResult(e);
+            } catch (ResourceExpiredException e) {
+                EFLogger.d(TAG, "Resource Expired:" + remoteUrlPath);
+                return DownloadResult.createFailedDownloadResult(e);
             }
-
-            // Note: content-length is the size to be downloaded, not total file size
-            // which will be different in the case of resuming a download
-            long size = start + connection.getContentLength();
-
-            // If successful, download returns the total file size
-            long total = download(connection.getInputStream(), start, size);
-
-            if (total == size) {
-                // All the data was copied
-                return DownloadResult.createSuccessfulDownloadResult(url, targetFile, size);
-            } else {
-                // Not all the data was copied, but no error, so download was cancelled
-                return DownloadResult.createCancelDownloadResult();
-            }
-        } catch (MalformedURLException e) { // bad url
-            return DownloadResult.createUnrecoverableErrorResult(e);
-        } catch (IOException e) {
-            e.printStackTrace();
-            return DownloadResult.createFailedDownloadResult(e);
-        } catch (HttpRespInvalidState e) {
-            EFLogger.d(TAG, "IOException:" + e.getMessage());
-            return DownloadResult.createUnrecoverableErrorResult(e);
-        } catch (ResourceExpiredException e) {
-            EFLogger.d(TAG, "Resource Expired:" + remoteUrlPath);
-            return DownloadResult.createFailedDownloadResult(e);
         }
     }
 

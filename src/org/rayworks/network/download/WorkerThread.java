@@ -26,35 +26,37 @@ import org.rayworks.network.util.EFLogger;
  * The thread handles downloading remote resource files.
  */
 public class WorkerThread extends Thread {
-	public static final String TAG = WorkerThread.class.getSimpleName();
+    public static final String TAG = WorkerThread.class.getSimpleName();
 
-	/***
-	 * A flag indicates the thread will exist soon
-	 */
-	private volatile boolean existing = false;
+    /***
+     * A flag indicates the thread will exist soon
+     */
+    private volatile boolean existing = false;
 
-	/***
-	 * A flag indicates the thread will rest and stop executing new task
-	 */
-	private volatile boolean resting = false;
-	
-	private BlockingQueue<BackgroundTask> mQueue;
-	//final private SortedMap<SyncEntity, SyncEntity> mCompleteMap;
-	private Downloader downloader;
+    /***
+     * A flag indicates the thread will rest and stop executing new task
+     */
+    private volatile boolean resting = false;
 
-	private Object restLock = new Object();
-    private Object downloaderLock = new Object();
+    private BlockingQueue<BackgroundTask> mQueue;
+    //final private SortedMap<SyncEntity, SyncEntity> mCompleteMap;
+    private Downloader downloader;
 
-	private final SyncStateStore mStateStore;
-	private final BaseCache baseCache;
-	private volatile BackgroundTask task;
+    private final Object restLock = new Object();
+    private final Object downloaderLock = new Object();
+
+    private final SyncStateStore mStateStore;
+    private final BaseCache baseCache;
+    private volatile BackgroundTask task;
+    private final int timeout;
 
     /***
      * The event listener to observer the quiting of current task
      */
-    public static interface TaskCancelledEventListener {
+    public interface TaskCancelledEventListener {
         void onTaskCancelled();
     }
+
     private TaskCancelledEventListener taskCancelledEventListener;
 
     public void setTaskCancelledEventListener(TaskCancelledEventListener taskCancelledEventListener) {
@@ -62,187 +64,190 @@ public class WorkerThread extends Thread {
     }
 
     public BackgroundTask getTask() {
-		return task;
-	}
+        return task;
+    }
 
-	public WorkerThread(String name, final BlockingQueue<BackgroundTask> queue, final SyncStateStore syncStateStore, BaseCache cache) {
-		super(name);
+    public WorkerThread(String name, final BlockingQueue<BackgroundTask> queue, final SyncStateStore syncStateStore,
+                        BaseCache cache, int timeout) {
+        super(name);
 
-		mQueue = queue;
-		//mCompleteMap = completeTasks;
-		mStateStore = syncStateStore;
+        mQueue = queue;
+        //mCompleteMap = completeTasks;
+        mStateStore = syncStateStore;
 
-		baseCache = cache;
-	}
+        baseCache = cache;
 
-	/***
-	 * Pauses the tasks and notifies the current thread to quit
-	 */
-	public void stopNow(){
-		cancelRunningTask();
+        this.timeout = timeout;
+    }
 
-		existing = true;
-		interrupt();
-	}
+    /***
+     * Pauses the tasks and notifies the current thread to quit
+     */
+    public void stopNow() {
+        cancelRunningTask();
 
-	/***
-	 * Quits the current executing task
-	 */
-	public void cancelRunningTask(){
+        existing = true;
+        interrupt();
+    }
+
+    /***
+     * Quits the current executing task
+     */
+    public void cancelRunningTask() {
         synchronized (downloaderLock) {
             if (downloader != null) {
                 downloader.cancel();
             }
         }
-	}
+    }
 
-	@Override
-	public void run() {
-		//TODO: The thread's priority should be set lower to avoid competing with main thread.
+    @Override
+    public void run() {
+        //TODO: The thread's priority should be set lower to avoid competing with main thread.
 
-		while (!existing) {
+        while (!existing) {
 
-			// running state controlled by outside signal
-			listenToRestSignal();
+            // running state controlled by outside signal
+            listenToRestSignal();
 
-			try {
-				task = mQueue.take();
-				EFLogger.d(TAG, getName() + ">>> Fetch task:" + task);
-			} catch (InterruptedException e) {
-				// e.printStackTrace();
-				if (existing) { // it was time to quit.
-					EFLogger.d(TAG, ">>>" + getName() + " is existing now");
+            try {
+                task = mQueue.take();
+                EFLogger.d(TAG, getName() + ">>> Fetch task:" + task);
+            } catch (InterruptedException e) {
+                // e.printStackTrace();
+                if (existing) { // it was time to quit.
+                    EFLogger.d(TAG, ">>>" + getName() + " is existing now");
 
-					task = null;
-					return;
-				}
-				continue;
-			}
+                    task = null;
+                    return;
+                }
+                continue;
+            }
 
-			do{
-				String remotePath = task.getNextSyncTask();
-				boolean targetFileDownloaded = baseCache.existFile(remotePath);
+            do {
+                String remotePath = task.getNextSyncTask();
+                boolean targetFileDownloaded = baseCache.existFile(remotePath);
 
-				if(targetFileDownloaded){
-					EFLogger.d(TAG, "cache hit for url: " + remotePath);
-					task.notifyComplete(remotePath);// filter the path
-				}else{
-					// Realtime downloading begins
-                    if(resting){ // any rescheduling request right now?
-                        if(taskCancelledEventListener != null){
+                if (targetFileDownloaded) {
+                    EFLogger.d(TAG, "cache hit for url: " + remotePath);
+                    task.notifyComplete(remotePath);// filter the path
+                } else {
+                    // Realtime downloading begins
+                    if (resting) { // any rescheduling request right now?
+                        if (taskCancelledEventListener != null) {
                             taskCancelledEventListener.onTaskCancelled();
                         }
                         break;
                     }
-                    
+
                     synchronized (downloaderLock) {
-                        downloader = new Downloader(remotePath, mStateStore, baseCache);
+                        downloader = new Downloader(remotePath, mStateStore, baseCache, timeout);
                         downloader.setProgressListener(task.getDownloadListener());
                     }
                     DownloadResult downloadResult = downloader.downloadFile();
-					if(downloadResult.isOk()) {
-						// remove the record of realated temp file
-						//runningTask.getSyncStateStore().removeDownloadedFileStamp(entity.getTargetFile().getAbsolutePath()); // synchronized operation
+                    if (downloadResult.isOk()) {
+                        // remove the record of realated temp file
+                        //runningTask.getSyncStateStore().removeDownloadedFileStamp(entity.getTargetFile().getAbsolutePath()); // synchronized operation
 
-						handleSuccessfulDownload(task, remotePath);
-					} else if (downloadResult.isCanceled()) {
-						handleTaskCancelled(task, remotePath);
-                        if(taskCancelledEventListener != null){
+                        handleSuccessfulDownload(task, remotePath);
+                    } else if (downloadResult.isCanceled()) {
+                        handleTaskCancelled(task, remotePath);
+                        if (taskCancelledEventListener != null) {
                             taskCancelledEventListener.onTaskCancelled();
                         }
-						break;
-					} else if (!downloadResult.isRecoverable()) {
-						// File does not exist on server, we are unlikely to recover from this
-						handleUnrecoverableFailure(task);
-						break;
+                        break;
+                    } else if (!downloadResult.isRecoverable()) {
+                        // File does not exist on server, we are unlikely to recover from this
+                        handleUnrecoverableFailure(task);
+                        break;
 
-					} else {
-						EFLogger.d(TAG, "Error: failed to download, retry it later... url:" + remotePath);
-						try {
-							// failed to download, retry it late.
-							handleCommonFailure(task, downloadResult.getErrorCause());
-						}catch (Exception e){
-							EFLogger.d(TAG, "Last Retry failed, stop trying for resource #" + remotePath);
-							task.notifyError(downloadResult.getErrorCause().getMessage());
-							break;
-						}
+                    } else {
+                        EFLogger.d(TAG, "Error: failed to download, retry it later... url:" + remotePath);
+                        try {
+                            // failed to download, retry it late.
+                            handleCommonFailure(task, downloadResult.getErrorCause());
+                        } catch (Exception e) {
+                            EFLogger.d(TAG, "Last Retry failed, stop trying for resource #" + remotePath);
+                            task.notifyError(downloadResult.getErrorCause().getMessage());
+                            break;
+                        }
 
-					}
+                    }
 
-				}
-			}while(!existing && task.hasNextSyncTask());
+                }
+            } while (!existing && task.hasNextSyncTask());
 
-			task = null;
-			listenToRestSignal();
-		}
-	}
+            task = null;
+            listenToRestSignal();
+        }
+    }
 
-	private void listenToRestSignal() {
-		try {
+    private void listenToRestSignal() {
+        try {
             checkSignalToWait();
-        }catch (InterruptedException e){
+        } catch (InterruptedException e) {
             e.printStackTrace();
         }
-	}
+    }
 
-	/***
-	 * Makes the thread stop executing task and wait
-	 */
-	public void rest(){
-		resting = true;
-		cancelRunningTask();
-	}
+    /***
+     * Makes the thread stop executing task and wait
+     */
+    public void rest() {
+        resting = true;
+        cancelRunningTask();
+    }
 
-	/***
-	 * Wakes up the thread and then continues to process tasks
-	 */
-	public void wakeup(){
-		resting = false;
-		synchronized (restLock) {
-			restLock.notifyAll();
-			EFLogger.d("", ">>> wakeup() invoked #" + getName());
-		}
-	}
+    /***
+     * Wakes up the thread and then continues to process tasks
+     */
+    public void wakeup() {
+        resting = false;
+        synchronized (restLock) {
+            restLock.notifyAll();
+            EFLogger.d("", ">>> wakeup() invoked #" + getName());
+        }
+    }
 
-	private void checkSignalToWait() throws InterruptedException{
-		synchronized (restLock) {
-			while (resting) {
-				EFLogger.d("", ">>> before resting #" + getName());
-				restLock.wait();
-				EFLogger.d("", ">>> after resting, go back to work. #" + getName());
-			}
-		}
-	}
+    private void checkSignalToWait() throws InterruptedException {
+        synchronized (restLock) {
+            while (resting) {
+                EFLogger.d("", ">>> before resting #" + getName());
+                restLock.wait();
+                EFLogger.d("", ">>> after resting, go back to work. #" + getName());
+            }
+        }
+    }
 
-	private void handleTaskCancelled(BackgroundTask task, String remotePath) {
-		EFLogger.d("", "task cancelled :" + remotePath);
+    private void handleTaskCancelled(BackgroundTask task, String remotePath) {
+        EFLogger.d("", "task cancelled :" + remotePath);
 
-		// should be configurable
+        // should be configurable
 		/*task.reset();
 		mQueue.add(task);*/
-	}
+    }
 
-	/***
-	 * Handles common failure
-	 * @param task
-	 */
-	private void handleCommonFailure(BackgroundTask task, Exception e) throws Exception{
-		// CompletionType.FAILED, most likely by a network problem
+    /***
+     * Handles common failure
+     * @param task
+     */
+    private void handleCommonFailure(BackgroundTask task, Exception e) throws Exception {
+        // CompletionType.FAILED, most likely by a network problem
 
-		//sync task failed, lets try to sync it again (Retry strategy?!)
-		RetryStrategy retryStrategy = task.getRetryStrategy();
-		retryStrategy.retry(e);
-	}
+        //sync task failed, lets try to sync it again (Retry strategy?!)
+        RetryStrategy retryStrategy = task.getRetryStrategy();
+        retryStrategy.retry(e);
+    }
 
-	private void handleUnrecoverableFailure(BackgroundTask task) {
-		task.notifyError("Error: FAILED_SERVER");
-	}
+    private void handleUnrecoverableFailure(BackgroundTask task) {
+        task.notifyError("Error: FAILED_SERVER");
+    }
 
-	private void handleSuccessfulDownload(BackgroundTask task, String remotePath) {
+    private void handleSuccessfulDownload(BackgroundTask task, String remotePath) {
 		/*SyncEntity syncEntity = runningTask.getEntity();
 		syncEntity.setTimestamp(System.currentTimeMillis());*/
 
-		task.notifyComplete(remotePath);
-		EFLogger.d("WorkThread", "download complete with url: " + remotePath);
-	}
+        task.notifyComplete(remotePath);
+        EFLogger.d("WorkThread", "download complete with url: " + remotePath);
+    }
 }

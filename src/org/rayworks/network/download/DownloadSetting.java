@@ -17,15 +17,14 @@
 package org.rayworks.network.download;
 
 public class DownloadSetting {
-	public DownloadSetting() {
 
-	}
+    private int threadPriority;
     private int timeout;
     private int threadNum;
-	private long maxSizeForDownloadContent ;
-	private long minSizeKeptForDeviceStorage ;
-    
-    
+    private long maxSizeForDownloadContent;
+    private long minSizeKeptForDeviceStorage;
+
+
     private DownloadEnabledStrategy downloadEnabledStrategy;
 
     public int getThreadNum() {
@@ -34,6 +33,10 @@ public class DownloadSetting {
 
     public int getTimeout() {
         return timeout;
+    }
+
+    public int getThreadPriority() {
+        return threadPriority;
     }
 
     public long getMaxSizeForDownloadContent() {
@@ -48,24 +51,26 @@ public class DownloadSetting {
         return downloadEnabledStrategy;
     }
 
-    private DownloadSetting(Builder builder){
-        
+    private DownloadSetting(Builder builder) {
+
         this.timeout = builder.timeout;
         this.threadNum = builder.threadNum;
+        this.threadPriority = builder.threadPriority;
         this.maxSizeForDownloadContent = builder.maxSizeForDownloadContent;
         this.minSizeKeptForDeviceStorage = builder.minSizeKeptForDeviceStorage;
         this.downloadEnabledStrategy = builder.downloadEnabledStrategy;
     }
-    
-    public static class Builder{
-        private int timeout = 10*1000;
+
+    public static class Builder {
+        private int timeout = 10 * 1000; // in Milliseconds
         private int threadNum = 3;
+        private int threadPriority = Integer.MIN_VALUE;
         private long maxSizeForDownloadContent = 1024 * 1024 * 450L;
         private long minSizeKeptForDeviceStorage = 100 * 1024 * 1024L;
         private DownloadEnabledStrategy downloadEnabledStrategy;
-        
-        public Builder(){
-            
+
+        public Builder() {
+
         }
 
         public Builder setTimeout(int timeout) {
@@ -78,9 +83,14 @@ public class DownloadSetting {
             return this;
         }
 
+        public Builder setThreadPriority(int threadPriority) {
+            this.threadPriority = threadPriority;
+            return this;
+        }
+
         public Builder setDownloadEnabledStrategy(DownloadEnabledStrategy downloadEnabledStrategy) {
             this.downloadEnabledStrategy = downloadEnabledStrategy;
-            return this; 
+            return this;
         }
 
         public Builder setMaxSizeForDownloadContent(long maxSizeForDownloadContent) {
@@ -93,10 +103,16 @@ public class DownloadSetting {
             return this;
         }
 
-        public DownloadSetting create(){
+        public DownloadSetting create() {
+            if (threadPriority == Integer.MIN_VALUE) {
+                throw new IllegalArgumentException("The thread priority should be set properly");
+            }
+
+            if (downloadEnabledStrategy == null) {
+                throw new IllegalArgumentException("The download strategy should be specified");
+            }
+
             return new DownloadSetting(this);
         }
-        
-        
     }
 }

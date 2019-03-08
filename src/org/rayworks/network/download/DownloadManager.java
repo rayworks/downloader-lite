@@ -54,7 +54,7 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
     private static final String TAG = DownloadManager.class.getSimpleName();
 
     private DownloadSetting downloadSetting;
-    
+
     private final SyncStateStore syncStateStore;
 
     private final int workThreadNum;
@@ -72,7 +72,7 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
     public BaseCache getDownloadCache() {
         return cache;
     }
-    
+
     public ArrayList<BackgroundTask> recoverableTasks = new ArrayList<>();
 
     /**
@@ -94,7 +94,7 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
         checkNotNull(connectivityService);
         checkNotNull(deviceStorageMonitor);
         checkNotNull(baseCache);
-        
+
         downloadSetting = setting;
         this.syncStateStore = syncStateStore;
         this.workThreadNum = setting.getThreadNum();
@@ -114,18 +114,24 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
         checkNotNull(downloadEnabledStrategy);
 
         restoreSyncTasks();
-        
+
         start();
     }
 
     private void restoreSyncTasks() {
         /*TO DO*/
     }
-    
+
     private void start() {
+        int timeout = downloadSetting.getTimeout();
+        int threadPriority = downloadSetting.getThreadPriority();
+        EFLogger.d(TAG, String.format("Thread config : timeout | %d, priority | %d", timeout, threadPriority));
+
         WorkerThread workThread;
         for (int i = 0; i < workThreadNum; i++) {
-            workThread = new WorkerThread("Thread#" + i, ongoingTasks, syncStateStore, cache);
+            workThread = new WorkerThread("Thread#" + i, ongoingTasks, syncStateStore, cache,
+                    timeout);
+            workThread.setPriority(threadPriority);
             workThreads[i] = workThread;
 
             workThread.start();
@@ -138,13 +144,13 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
             WorkerThread thread = workThreads[i];
             thread.stopNow();
         }*/
-        
+
         restWorkers();
     }
 
     @Override
     public void config(DownloadSetting setting) {
-        if(setting != null){
+        if (setting != null) {
             downloadSetting = setting;
             downloadEnabledStrategy = downloadSetting.getDownloadEnabledStrategy();
             checkNotNull(downloadEnabledStrategy);
@@ -154,9 +160,9 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
     @Override
     public boolean haveAllFilesDownloaded(List<String> urls) {
         boolean allDownloaded = false;
-        for (String url : urls){
+        for (String url : urls) {
             allDownloaded = cache.existFile(url);
-            if(!allDownloaded){
+            if (!allDownloaded) {
                 return allDownloaded;
             }
         }
@@ -185,12 +191,12 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
     private void rescheduleEnqueuedTasksAndResetThread(
             final WorkerThread workerThread,
             WorkerThread.TaskCancelledEventListener eventListener) {
-        
+
         BackgroundTask backgroundTask = workerThread.getTask();
         if (backgroundTask != null) {
             recoverableTasks.add(backgroundTask.copyInstance());
             backgroundTask.releaseListener();
-        }else {
+        } else {
             System.out.println(">>> Not found task in " + workerThread.getName());
         }
         workerThread.setTaskCancelledEventListener(eventListener);
@@ -200,13 +206,13 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
 
     /***
      * Checks whether it's a duplicate in-progress task
-     *  
+     *
      * @param taskTag
      * @return
      */
-    private boolean isTaskOngoing(final String taskTag){
+    private boolean isTaskOngoing(final String taskTag) {
         boolean ongoing = foundTaskInQueue(taskTag);
-        if(!ongoing){
+        if (!ongoing) {
             ongoing = locateThreadWithTaskTag(taskTag) != null;
         }
         return ongoing;
@@ -226,7 +232,7 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
             }
         };
 
-        boolean ongoing ;
+        boolean ongoing;
         Collection<BackgroundTask> targetTasks = Collections2.filter(ongoingTasks, predicate);
         ongoing = targetTasks.size() > 0;
         return ongoing;
@@ -236,11 +242,11 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
     public void cancelTask(String key) {
         boolean found = false;
 
-        if(ongoingTasks.size() > 0) {
+        if (ongoingTasks.size() > 0) {
             found = cancelTaskInQueueWithTag(key);
         }
 
-        if(!found) {
+        if (!found) {
             cancelRunningTaskWithTag(key);
         }
         //EFLogger.d("", "Failed to cancel Task with key#" + key);
@@ -249,7 +255,7 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
 
     /***
      * Retrieves the thread which is executing  a specified task
-     * 
+     *
      * @param tag
      * @return
      */
@@ -258,7 +264,7 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
             WorkerThread thread = workThreads[i];
             final BackgroundTask backgroundTask = thread.getTask();
             if (backgroundTask != null && backgroundTask.containTargetKey(tag)) {
-                EFLogger.d(TAG, "Worker located " + thread.getName() + " when running task #"+ tag);
+                EFLogger.d(TAG, "Worker located " + thread.getName() + " when running task #" + tag);
                 return thread;
             }
         }
@@ -268,7 +274,7 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
 
     private void cancelRunningTaskWithTag(String tag) {
         WorkerThread thread = locateThreadWithTaskTag(tag);
-        if(thread != null){
+        if (thread != null) {
 
             // second check
             final BackgroundTask backgroundTask = thread.getTask();
@@ -291,14 +297,14 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
     @Override
     public void add(String url, DownloadListener downloadListener) {
         checkArgument(url != null);
-        
-        if(downloadEnabledStrategy.isNetworkAvailableForDownloading()) {
+
+        if (downloadEnabledStrategy.isNetworkAvailableForDownloading()) {
             if (!isTaskOngoing(url)) {
                 ongoingTasks.add(new BackgroundTask(url, downloadListener));
             } else {
                 EFLogger.d(TAG, "Ongoing task detected, request dumped now ...");
             }
-        }else {
+        } else {
             downloadListener.onError("network not available for downloading");
         }
     }
@@ -306,17 +312,17 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
     @Override
     public void add(ArrayList<DownloadRequest> requests) {
         checkNotNull(requests);
-        
+
         for (DownloadRequest request : requests) {
             add(request.getUrl(), request.getDownloadListener());
         }
     }
 
-    public void addBatchedTask(List<String> urls, DownloadListener downloadListener){
+    public void addBatchedTask(List<String> urls, DownloadListener downloadListener) {
         checkNotNull(urls);
         checkNotNull(downloadEnabledStrategy);
-        
-        if(downloadEnabledStrategy.isNetworkAvailableForDownloading()) {
+
+        if (downloadEnabledStrategy.isNetworkAvailableForDownloading()) {
             if (urls.size() > 0) {
                 String tag = urls.get(0);
                 checkArgument(tag != null && !tag.equals(""));
@@ -328,7 +334,7 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
                     EFLogger.d(TAG, "Ongoing task detected, request dumped now ...");
                 }
             }
-        }else {
+        } else {
             downloadListener.onError("network not available for downloading");
         }
     }
@@ -343,10 +349,10 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
 
         boolean found = false;
         Iterator<BackgroundTask> iterator = ongoingTasks.iterator();
-        while (iterator.hasNext()){
+        while (iterator.hasNext()) {
             BackgroundTask bkgTask = iterator.next();
 
-            if(predicate.apply(bkgTask)){
+            if (predicate.apply(bkgTask)) {
                 iterator.remove();
                 EFLogger.d(TAG, "Task" + url + " removed from queue");
                 found = true;
@@ -359,15 +365,15 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
 
     @Override
     public void prioritizeNewTask(final String url, final DownloadListener downloadListener) {
-        if(isTaskOngoing(url)){
+        if (isTaskOngoing(url)) {
             EFLogger.d(TAG, "same task detected, prioritizing operation cancelled tag#" + url);
-        }else {
-            if(downloadEnabledStrategy.isNetworkAvailableForDownloading()){
-                if(hasExtraWorker()){
+        } else {
+            if (downloadEnabledStrategy.isNetworkAvailableForDownloading()) {
+                if (hasExtraWorker()) {
                     // we have spare thread now, so just do it
                     ongoingTasks.addFirst(new BackgroundTask(url, downloadListener));
                     EFLogger.d(TAG, ">>> Having enough worker, just add the task at header, total task num:" + ongoingTasks.size());
-                }else {
+                } else {
                     // adjust the queue
                     // TODO: find a longest running thread, interrupt it and reschedule the tasks
                     // switch the last thread to avoid interrupting the first one all the time
@@ -378,9 +384,9 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
                         @Override
                         public void onTaskCancelled() {
                             EFLogger.d(TAG, ">>>||| interrupted tasks, task num:" + recoverableTasks.size());
-                            
-                            Iterator<BackgroundTask> iterator =  ongoingTasks.iterator();
-                            while (iterator.hasNext()){
+
+                            Iterator<BackgroundTask> iterator = ongoingTasks.iterator();
+                            while (iterator.hasNext()) {
                                 BackgroundTask backgroundTask = iterator.next();
                                 recoverableTasks.add(backgroundTask);
                                 iterator.remove();
@@ -400,11 +406,11 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
         }
 
     }
-    
+
     private boolean hasExtraWorker() {
         boolean hasRemainingWorker = false;
-        for(int i = 0; i< workThreadNum; i++){
-            if(workThreads[i].getState().equals(Thread.State.WAITING)){
+        for (int i = 0; i < workThreadNum; i++) {
+            if (workThreads[i].getState().equals(Thread.State.WAITING)) {
                 hasRemainingWorker = true;
                 break;
             }
@@ -414,9 +420,9 @@ public class DownloadManager implements DownloadService, ConnectivityService.Con
 
     @Override
     public void onStateChange(ConnectivityStateEvent connectivityStateEvent) {
-        if(!connectivityStateEvent.isAppOnline()){
+        if (!connectivityStateEvent.isAppOnline()) {
             // 
-        }else{
+        } else {
             //wakeupWorkers();
         }
     }

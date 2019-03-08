@@ -25,24 +25,24 @@ public class DownloadManagerTest {
     private SyncStateStore store;
 
     private ExecutorService executor;
-    
+
     private DownloadSetting downloadSetting;
 
     @Before
     public void setUp() throws Exception {
         store = new SyncStateStore(new JsonKVStore(OUTPUT_FOLDER));
         executor = Executors.newSingleThreadExecutor();
-        DiskFileCache.Limits limits = new DiskFileCache.Limits((int) 13.5 * 1024 * 1024, 0);
+        DiskFileCache.Limits limits = new DiskFileCache.Limits(Integer.MAX_VALUE, 0);
         downloadSetting = new DownloadSetting.Builder().setDownloadEnabledStrategy(new DownloadEnabledStrategy() {
             @Override
             public boolean isNetworkAvailableForDownloading() {
                 return true;
             }
-        }).setThreadNum(2).create();
-        
+        }).setThreadNum(2).setTimeout(15000).setThreadPriority(Thread.NORM_PRIORITY).create();
+
         downloadMgr = new DownloadManager(
                 store, downloadSetting, new ConnectivityServiceImpl(), new DeviceStorageMonitorImpl(),
-                new DiskFileCache(new File(OUTPUT_FOLDER), executor)
+                new DiskFileCache(new File(OUTPUT_FOLDER), executor, limits)
         );
     }
 
@@ -51,30 +51,19 @@ public class DownloadManagerTest {
         if (downloadMgr != null) {
             downloadMgr.cancelAllTasks();
         }
-        if(executor != null){
+        if (executor != null) {
             executor.shutdownNow();
         }
     }
-    
+
     @Test
-    public void testMultiTasks(){
+    public void testMultiTasks() {
         addBatchedTask(new String[]{
-                "http://assets-cdn.github.com/images/modules/open_graph/github-logo.png",
-                "http://assets-cdn.github.com/images/modules/aws/cloud-1.png",
-                //"http://assets-cdn.github.com/images/modules/aws/cloud-4.png"
+                "https://github.githubassets.com/images/modules/site/home-illo-team.svg",
+                "https://github.githubassets.com/images/modules/site/mona-desk.svg",
 
         });
 
-        addSingleTask("http://music.baidu.com/cms/BaiduMusic-musicsybutton.apk");
-
-        addBatchedTask(new String[]{
-                "http://assets-cdn.github.com/images/modules/aws/cloud-4.png",
-                "http://music.baidu.com/cms/BaiduMusic-musicsybutton.apk"
-        });
-
-        // prioritize the task
-        //String url = "http://";
-        
         try {
             /*Thread.sleep(200);
             
@@ -114,14 +103,14 @@ public class DownloadManagerTest {
 
 
     private void addBatchedTask(String[] urls) {
-        if(downloadMgr.haveAllFilesDownloaded(Arrays.asList(urls))){
+        if (downloadMgr.haveAllFilesDownloaded(Arrays.asList(urls))) {
             System.out.println(">>> Files cache hit, task cancelled: urls " + Arrays.toString(urls));
-        }else {
+        } else {
             downloadMgr.addBatchedTask(Arrays.asList(urls), new SingleDownloadListener());
         }
     }
 
-    private void addSingleTask(String singleUrl ) {
+    private void addSingleTask(String singleUrl) {
         DownloadListener singleDownloadListener = new DownloadListener() {
             @Override
             public void onComplete(String remotePath) {

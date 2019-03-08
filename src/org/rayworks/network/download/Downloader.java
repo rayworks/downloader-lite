@@ -16,6 +16,7 @@
 
 package org.rayworks.network.download;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import java.io.BufferedInputStream;
@@ -51,6 +52,7 @@ public class Downloader implements IOUtils.CopyListener {
     private final BaseCache cache;
 
     private int progress;
+    private final int timeout;
 
     /**
      * Constructor
@@ -58,12 +60,16 @@ public class Downloader implements IOUtils.CopyListener {
      * @param remoteUrlPath
      * @param syncStateStore
      * @param cache
+     * @param timeout network timeout value in milliseconds
      */
-    public Downloader(String remoteUrlPath, SyncStateStore syncStateStore, BaseCache cache) {
+    public Downloader(String remoteUrlPath, SyncStateStore syncStateStore, BaseCache cache, int timeout) {
         checkNotNull(syncStateStore);
+        checkArgument(timeout > 0);
+
         this.syncStateStore = syncStateStore;
         this.remoteUrlPath = remoteUrlPath;
         this.cache = cache;
+        this.timeout = timeout;
     }
 
     @Override
@@ -90,7 +96,7 @@ public class Downloader implements IOUtils.CopyListener {
             // download the file
             try {
                 URL url = new URL(remoteUrlPath);
-                if(cache.existFile(remoteUrlPath)){
+                if (cache.existFile(remoteUrlPath)) {
                     EFLogger.d(TAG, "Cache hit for " + remoteUrlPath + ", abort downloading again.");
 
                     File file = cache.getFile(remoteUrlPath);
@@ -99,6 +105,9 @@ public class Downloader implements IOUtils.CopyListener {
 
                 File targetFile = cache.getTempFile(remoteUrlPath);
                 HttpURLConnection connection = connect(remoteUrlPath, targetFile);
+
+                // disable the compression of the body for the sake of downloading from last break point.
+                // connection.setRequestProperty("Accept-Encoding", "identity");
 
                 long start = 0;
                 int responseCode = connection.getResponseCode();
@@ -185,9 +194,8 @@ public class Downloader implements IOUtils.CopyListener {
         HttpURLConnection urlConnection;
         urlConnection = (HttpURLConnection) new URL(remoteUrlPath).openConnection();
 
-        // TODO: make value of timeout configurable
-        urlConnection.setConnectTimeout(30000);
-        urlConnection.setReadTimeout(30000);
+        urlConnection.setConnectTimeout(timeout);
+        urlConnection.setReadTimeout(timeout);
         urlConnection.setInstanceFollowRedirects(false);
         urlConnection.setUseCaches(false);
         urlConnection.setDoInput(true);
